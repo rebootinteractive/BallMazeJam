@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { LevelData, WallSide } from '../shared/types';
-import { Grid, type Cell, cellKey } from './Grid';
+import { Grid, type Cell, neighborInDirection } from './Grid';
 import { LabyrinthMesh } from './LabyrinthMesh';
 import { Ball } from './Ball';
 import { TapInput } from './Input';
@@ -28,9 +28,6 @@ export class GameApp {
   private timeLeft: number;
   private status: 'playing' | 'won' | 'lost' = 'playing';
   private onMenuCb: () => void;
-
-  /** When a slide finishes against a same-color ball, store the partner here. */
-  private pendingPopForBall = new Map<string, string>(); // sliding ball id -> target ball id
 
   constructor(parent: HTMLElement, opts: GameAppOptions) {
     this.parent = parent;
@@ -83,6 +80,9 @@ export class GameApp {
     this.input.onSwipe((cell, priority) => this.handleSwipe(cell, priority));
     this.input.attach();
 
+    // Any same-color pairs that start the level already adjacent should pop immediately.
+    for (const ball of this.balls) this.popPairsAround(ball);
+
     this.resizeObserver = new ResizeObserver(() => this.handleResize());
     this.resizeObserver.observe(parent);
     this.handleResize();
@@ -134,30 +134,33 @@ export class GameApp {
     if (!dir) return;
 
     const result = this.grid.slideRay(ball.cell, dir, others);
-
-    const samePartner = result.collidedAt
-      ? this.balls.find(
-          (b) =>
-            b !== ball &&
-            b.state === 'idle' &&
-            b.color === ball.color &&
-            b.cell.col === result.collidedAt!.col &&
-            b.cell.row === result.collidedAt!.row
-        )
-      : undefined;
-
-    if (result.path.length === 0) {
-      // Couldn't move. Only act if the immediate neighbor is a same-color partner —
-      // pop the pair without sliding.
-      if (samePartner) {
-        ball.beginPop();
-        samePartner.beginPop();
-      }
-      return;
-    }
-
-    if (samePartner) this.pendingPopForBall.set(ball.id, samePartner.id);
+    if (result.path.length === 0) return;
     ball.beginSlide(result.path);
+  }
+
+  /**
+   * Pop the given ball with any same-color, idle ball it's adjacent to across an
+   * open edge. Called after every slide ends and once at level start.
+   */
+  private popPairsAround(ball: Ball) {
+    if (ball.state !== 'idle') return;
+    for (const dir of ['N', 'E', 'S', 'W'] as WallSide[]) {
+      const n = neighborInDirection(ball.cell, dir);
+      if (!this.grid.passable(ball.cell, n)) continue;
+      const partner = this.balls.find(
+        (b) =>
+          b !== ball &&
+          b.state === 'idle' &&
+          b.color === ball.color &&
+          b.cell.col === n.col &&
+          b.cell.row === n.row
+      );
+      if (partner) {
+        ball.beginPop();
+        partner.beginPop();
+        return;
+      }
+    }
   }
 
   private otherCells(self: Ball): Set<string> {
@@ -187,15 +190,7 @@ export class GameApp {
     for (const ball of this.balls) {
       const result = ball.update(dt);
       if (result === 'slide-done') {
-        const partnerId = this.pendingPopForBall.get(ball.id);
-        if (partnerId) {
-          this.pendingPopForBall.delete(ball.id);
-          const partner = this.balls.find((b) => b.id === partnerId);
-          if (partner && partner.state === 'idle') {
-            ball.beginPop();
-            partner.beginPop();
-          }
-        }
+        this.popPairsAround(ball);
       }
     }
 

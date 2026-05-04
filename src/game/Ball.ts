@@ -32,16 +32,15 @@ export class Ball {
   // Pop state
   private popTimer = 0;
 
-  private static materials = new Map<ColorKey, THREE.MeshStandardMaterial>();
-
   constructor(grid: Grid, entry: BallEntry, idx: number) {
     this.grid = grid;
     this.color = entry.color;
     this.cell = { col: entry.col, row: entry.row };
     this.id = `ball-${idx}-${entry.color}`;
     const sphere = new THREE.SphereGeometry(BALL_RADIUS, 28, 20);
-    const mat = Ball.getMaterial(this.color);
-    this.mesh = new THREE.Mesh(sphere, mat);
+    // Each ball owns a unique material instance: pop animation mutates opacity
+    // and the shared cache must not be polluted across balls/levels/restarts.
+    this.mesh = new THREE.Mesh(sphere, Ball.makeMaterial(this.color));
     this.mesh.userData.ball = this.id;
     this.mesh.userData.cell = this.cell;
     const w = grid.cellToWorld(this.cell);
@@ -49,19 +48,14 @@ export class Ball {
     this.group.add(this.mesh);
   }
 
-  static getMaterial(color: ColorKey): THREE.MeshStandardMaterial {
-    let m = Ball.materials.get(color);
-    if (!m) {
-      m = new THREE.MeshStandardMaterial({
-        color: COLOR_HEX[color],
-        roughness: 0.35,
-        metalness: 0.15,
-        emissive: COLOR_HEX[color],
-        emissiveIntensity: 0.18,
-      });
-      Ball.materials.set(color, m);
-    }
-    return m;
+  private static makeMaterial(color: ColorKey): THREE.MeshStandardMaterial {
+    return new THREE.MeshStandardMaterial({
+      color: COLOR_HEX[color],
+      roughness: 0.35,
+      metalness: 0.15,
+      emissive: COLOR_HEX[color],
+      emissiveIntensity: 0.18,
+    });
   }
 
   cellKeyStr(): string {
@@ -157,5 +151,6 @@ export class Ball {
   dispose() {
     this.group.parent?.remove(this.group);
     this.mesh.geometry.dispose();
+    (this.mesh.material as THREE.MeshStandardMaterial).dispose();
   }
 }
